@@ -1,6 +1,3 @@
 #include "example.h"
 
-int example(int n)
-{
-    return n;
-}
+int example(int n) { return n; }

@@ -1,6 +1,8 @@
 #ifndef OBJECT_VALUE_H
 #define OBJECT_VALUE_H
 
+#include <stdint.h>
+
 #include "value.h"
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
@@ -16,21 +18,22 @@ typedef enum {
 
 struct Obj {
   ObjType type;
-  struct Obj* next;
+  struct Obj *next;
 };
 
 struct ObjString {
   Obj obj;
   int length;
   char *chars;
+  uint32_t hash;
 };
 
 static inline bool isObjType(Value value, ObjType type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;
 }
 
-ObjString* copyString(const char* chars, int length);
+ObjString *copyString(const char *chars, int length);
 void printObject(Value value);
-ObjString* takeString(char* chars, int length);
+ObjString *takeString(char *chars, int length);
 
 #endif

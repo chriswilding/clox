@@ -12,6 +12,9 @@ static void freeObject(Obj *object) {
     FREE(ObjFunction, object);
     break;
   }
+  case OBJ_NATIVE:
+    FREE(ObjNative, object);
+    break;
   case OBJ_STRING: {
     ObjString *string = (ObjString *)object;
     FREE_ARRAY(char, string->chars, string->length + 1);
@@ -30,7 +33,7 @@ void freeObjects() {
   }
 }
 
-void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
+void *reallocate(void *pointer,__attribute__((unused)) size_t oldSize, size_t newSize) {
   if (newSize == 0) {
     free(pointer);
     return NULL;

@@ -22,7 +22,8 @@ typedef enum {
   TYPE_SCRIPT,
 } FunctionType;
 
-typedef struct {
+typedef struct Compiler {
+  struct Compiler *enclosing;
   ObjFunction *function;
   FunctionType type;
 
@@ -62,20 +63,23 @@ typedef struct {
 
 static void and_(bool);
 static void binary(bool);
-static bool check(TokenType type);
-static void consume(TokenType type, const char *message);
+static void call(bool);
+static bool check(TokenType);
+static void consume(TokenType, const char *);
 static void declaration();
-static int emitJump(uint8_t instruction);
-static void error(const char *message);
+static int emitJump(uint8_t);
+static void expression();
+static void error(const char *);
+static void funDeclaration();
 static void grouping(bool);
-static bool identifiersEqual(Token *a, Token *b);
+static bool identifiersEqual(Token *, Token *);
 static void literal(bool);
 static void markInitialized();
 static bool match(TokenType);
 static void number(bool);
 static void or_(bool);
 static void patchJump(int offset);
-static int resolveLocal(Compiler *compiler, Token *name);
+static int resolveLocal(Compiler *, Token *);
 static void statement();
 static void synchronize();
 static void string(bool);
@@ -85,7 +89,7 @@ static void variable(bool);
 static void whileStatement();
 
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
+    [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
     [TOKEN_RIGHT_PAREN] = {NULL, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
@@ -136,8 +140,10 @@ static void emitBytes(uint8_t byte1, uint8_t byte2);
 static void errorAt(Token *token, const char *message);
 static void errorAtCurrent(const char *message);
 static ParseRule *getRule(TokenType type);
+static void initCompiler(Compiler *compiler, FunctionType type);
 static uint8_t makeConstant(Value value);
 static void parsePrecedence(Precedence precedence);
+static uint8_t parseVariable(const char *errorMessage);
 
 static void addLocal(Token name) {
   if (current->localCount == UINT8_COUNT) {
@@ -162,7 +168,7 @@ static void advance() {
   }
 }
 
-static void and_(bool canAssign) {
+static void and_(__attribute__((unused)) bool canAssign) {
   int endJump = emitJump(OP_JUMP_IF_FALSE);
 
   emitByte(OP_POP);
@@ -171,9 +177,24 @@ static void and_(bool canAssign) {
   patchJump(endJump);
 }
 
+static uint8_t argumentList() {
+  uint8_t argCount = 0;
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      expression();
+      if (argCount == 255) {
+        error("Can't have more than 255 arguments.");
+      }
+      argCount++;
+    } while (match(TOKEN_COMMA));
+  }
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+  return argCount;
+}
+
 static void beginScope() { current->scopeDepth++; }
 
-static void binary(bool canAssign) {
+static void binary(__attribute__((unused)) bool canAssign) {
   TokenType operatorType = parser.previous.type;
   ParseRule *rule = getRule(operatorType);
   parsePrecedence((Precedence)(rule->precedence + 1));
@@ -222,6 +243,11 @@ static void block() {
   consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
 
+static void call(__attribute__((unused)) bool canAssign) {
+  uint8_t argCount = argumentList();
+  emitBytes(OP_CALL, argCount);
+}
+
 static bool check(TokenType type) { return parser.current.type == type; }
 
 static void consume(TokenType type, const char *message) {
@@ -236,7 +262,9 @@ static void consume(TokenType type, const char *message) {
 static Chunk *currentChunk() { return &current->function->chunk; }
 
 static void declaration() {
-  if (match(TOKEN_VAR)) {
+  if (match(TOKEN_FUN)) {
+    funDeclaration();
+  } else if (match(TOKEN_VAR)) {
     varDeclaration();
   } else {
     statement();
@@ -305,7 +333,10 @@ static void emitLoop(int loopStart) {
   emitByte(offset & 0xff);
 }
 
-static void emitReturn() { emitByte(OP_RETURN); }
+static void emitReturn() {
+  emitByte(OP_NIL);
+  emitByte(OP_RETURN);
+}
 
 static ObjFunction *endCompiler() {
   emitReturn();
@@ -318,6 +349,7 @@ static ObjFunction *endCompiler() {
   }
 #endif
 
+  current = current->enclosing;
   return function;
 }
 
@@ -409,9 +441,40 @@ static void forStatement() {
   endScope();
 }
 
+static void function(FunctionType type) {
+  Compiler compiler;
+  initCompiler(&compiler, type);
+  beginScope();
+
+  consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      current->function->arity++;
+      if (current->function->arity > 255) {
+        errorAtCurrent("Can't have more than 255 parameters.");
+      }
+      uint8_t constant = parseVariable("Expect parameter name.");
+      defineVariable(constant);
+    } while (match(TOKEN_COMMA));
+  }
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+  consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+  block();
+
+  ObjFunction *function = endCompiler();
+  emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
+}
+
+static void funDeclaration() {
+  uint8_t global = parseVariable("Expect function name.");
+  markInitialized();
+  function(TYPE_FUNCTION);
+  defineVariable(global);
+}
+
 static ParseRule *getRule(TokenType type) { return &rules[type]; }
 
-static void grouping(bool canAssign) {
+static void grouping(__attribute__((unused)) bool canAssign) {
   expression();
   consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
 }
@@ -446,6 +509,7 @@ static void ifStatement() {
 }
 
 static void initCompiler(Compiler *compiler, FunctionType type) {
+  compiler->enclosing = current;
   compiler->function = NULL;
   compiler->type = type;
   compiler->localCount = 0;
@@ -453,13 +517,18 @@ static void initCompiler(Compiler *compiler, FunctionType type) {
   compiler->function = newFunction();
   current = compiler;
 
+  if (type != TYPE_SCRIPT) {
+    current->function->name =
+        copyString(parser.previous.start, parser.previous.length);
+  }
+
   Local *local = &current->locals[current->localCount++];
   local->depth = 0;
   local->name.start = "";
   local->name.length = 0;
 }
 
-static void literal(bool canAssign) {
+static void literal(__attribute__((unused)) bool canAssign) {
   switch (parser.previous.type) {
   case TOKEN_FALSE:
     emitByte(OP_FALSE);
@@ -486,6 +555,8 @@ static uint8_t makeConstant(Value value) {
 }
 
 static void markInitialized() {
+  if (current->scopeDepth == 0)
+    return;
   current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
@@ -516,12 +587,12 @@ static void namedVariable(Token name, bool canAssign) {
   }
 }
 
-static void number(bool canAssign) {
+static void number(__attribute__((unused)) bool canAssign) {
   double value = strtod(parser.previous.start, NULL);
   emitConstant(NUMBER_VAL(value));
 }
 
-static void or_(bool canAssign) {
+static void or_(__attribute__((unused)) bool canAssign) {
   int elseJump = emitJump(OP_JUMP_IF_FALSE);
   int endJump = emitJump(OP_JUMP);
 
@@ -595,6 +666,20 @@ static int resolveLocal(Compiler *compiler, Token *name) {
   return -1;
 }
 
+static void returnStatement() {
+  if (current->type == TYPE_SCRIPT) {
+    error("Can't return from top-level code.");
+  }
+
+  if (match(TOKEN_SEMICOLON)) {
+    emitReturn();
+  } else {
+    expression();
+    consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+    emitByte(OP_RETURN);
+  }
+}
+
 static void statement() {
   if (match(TOKEN_PRINT)) {
     printStatement();
@@ -602,6 +687,8 @@ static void statement() {
     forStatement();
   } else if (match(TOKEN_IF)) {
     ifStatement();
+  } else if (match(TOKEN_RETURN)) {
+    returnStatement();
   } else if (match(TOKEN_WHILE)) {
     whileStatement();
   } else if (match(TOKEN_LEFT_BRACE)) {
@@ -613,7 +700,7 @@ static void statement() {
   }
 }
 
-static void string(bool canAssign) {
+static void string(__attribute__((unused)) bool canAssign) {
   emitConstant(OBJ_VAL(
       copyString(parser.previous.start + 1, parser.previous.length - 2)));
 }
@@ -642,7 +729,7 @@ static void synchronize() {
   }
 }
 
-static void unary(bool canAssign) {
+static void unary(__attribute__((unused)) bool canAssign) {
   TokenType operatorType = parser.previous.type;
 
   // Compile the operand.
@@ -708,5 +795,5 @@ ObjFunction *compile(const char *source) {
   }
 
   ObjFunction *function = endCompiler();
-  return !parser.hadError ? NULL : function;
+  return parser.hadError ? NULL : function;
 }

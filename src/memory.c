@@ -6,6 +6,10 @@
 
 static void freeObject(Obj *object) {
   switch (object->type) {
+  case OBJ_CLOSURE: {
+    FREE(ObjClosure, object);
+    break;
+  }
   case OBJ_FUNCTION: {
     ObjFunction *function = (ObjFunction *)object;
     freeChunk(&function->chunk);
@@ -21,6 +25,12 @@ static void freeObject(Obj *object) {
     FREE(ObjString, object);
     break;
   }
+  case OBJ_UPVALUE: {
+    ObjClosure *closure = (ObjClosure *)object;
+    FREE_ARRAY(ObjUpvalue *, closure->upvalues, closure->upvalueCount);
+    FREE(ObjUpvalue, object);
+    break;
+  }
   }
 }
 
@@ -33,7 +43,8 @@ void freeObjects() {
   }
 }
 
-void *reallocate(void *pointer,__attribute__((unused)) size_t oldSize, size_t newSize) {
+void *reallocate(void *pointer, __attribute__((unused)) size_t oldSize,
+                 size_t newSize) {
   if (newSize == 0) {
     free(pointer);
     return NULL;

@@ -29,6 +29,7 @@ typedef enum {
 
 struct Obj {
   ObjType type;
+  bool isMarked;
   struct Obj *next;
 };
 
@@ -50,7 +51,7 @@ typedef struct ObjUpvalue {
   Obj obj;
   Value *location;
   Value closed;
-  struct ObjUpvalue* next;
+  struct ObjUpvalue *next;
 } ObjUpvalue;
 
 typedef struct {

@@ -86,6 +86,14 @@ void initTable(Table* table) {
   table->entries = NULL;
 }
 
+void markTable(Table* table) {
+  for (int i = 0; i < table->capacity; i++) {
+    Entry* entry = &table->entries[i];
+    markObject((Obj*)entry->key);
+    markValue(entry->value);
+  }
+}
+
 void tableAddAll(Table* from, Table* to) {
   for (int i = 0; i < from->capacity; i++) {
     Entry* entry = &from->entries[i];
@@ -118,6 +126,15 @@ bool tableGet(Table* table, ObjString* key, Value* value) {
 
   *value = entry->value;
   return true;
+}
+
+void tableRemoveWhite(Table* table) {
+  for (int i = 0; i < table->capacity; i++) {
+    Entry* entry = &table->entries[i];
+    if (entry->key != NULL && !entry->key->obj.isMarked) {
+      tableDelete(table, entry->key);
+    }
+  }
 }
 
 bool tableSet(Table* table, ObjString* key, Value value) {

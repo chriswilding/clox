@@ -21,7 +21,7 @@
 
 void collectGarbage();
 void freeObjects();
-void markObject(Obj* object);
+void markObject(Obj *object);
 void markValue(Value value);
 void *reallocate(void *pointer, size_t oldSize, size_t newSize);
 

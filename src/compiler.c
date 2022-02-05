@@ -75,11 +75,15 @@ static void call(bool);
 static bool check(TokenType);
 static void consume(TokenType, const char *);
 static void declaration();
+static void declareVariable();
+static void defineVariable(uint8_t);
+static void dot(bool);
 static int emitJump(uint8_t);
 static void expression();
 static void error(const char *);
 static void funDeclaration();
 static void grouping(bool);
+static uint8_t identifierConstant(Token *);
 static bool identifiersEqual(Token *, Token *);
 static void literal(bool);
 static void markInitialized();
@@ -102,7 +106,7 @@ ParseRule rules[] = {
     [TOKEN_LEFT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_COMMA] = {NULL, NULL, PREC_NONE},
-    [TOKEN_DOT] = {NULL, NULL, PREC_NONE},
+    [TOKEN_DOT] = {NULL, dot, PREC_CALL},
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_SEMICOLON] = {NULL, NULL, PREC_NONE},
@@ -280,6 +284,18 @@ static void call(__attribute__((unused)) bool canAssign) {
 
 static bool check(TokenType type) { return parser.current.type == type; }
 
+static void classDeclaration() {
+  consume(TOKEN_IDENTIFIER, "Expect class name.");
+  uint8_t nameConstant = identifierConstant(&parser.previous);
+  declareVariable();
+
+  emitBytes(OP_CLASS, nameConstant);
+  defineVariable(nameConstant);
+
+  consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+}
+
 static void consume(TokenType type, const char *message) {
   if (parser.current.type == type) {
     advance();
@@ -292,7 +308,9 @@ static void consume(TokenType type, const char *message) {
 static Chunk *currentChunk() { return &current->function->chunk; }
 
 static void declaration() {
-  if (match(TOKEN_FUN)) {
+  if (match(TOKEN_CLASS)) {
+    classDeclaration();
+  } else if (match(TOKEN_FUN)) {
     funDeclaration();
   } else if (match(TOKEN_VAR)) {
     varDeclaration();
@@ -330,6 +348,18 @@ static void defineVariable(uint8_t global) {
   }
 
   emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+static void dot(bool canAssign) {
+  consume(TOKEN_IDENTIFIER, "Expect property name after '.'.");
+  uint8_t name = identifierConstant(&parser.previous);
+
+  if (canAssign && match(TOKEN_EQUAL)) {
+    expression();
+    emitBytes(OP_SET_PROPERTY, name);
+  } else {
+    emitBytes(OP_GET_PROPERTY, name);
+  }
 }
 
 static void emitByte(uint8_t byte) {
